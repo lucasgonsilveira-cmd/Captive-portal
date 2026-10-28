@@ -1,0 +1,918 @@
+<!--
+  ============================================================================
+  PORTAL CATIVO - FATEC JAHU
+  ============================================================================
+  Página exibida para qualquer dispositivo que conectar no hotspot, ANTES
+  de ter acesso liberado à internet (é o iptables, no servidor, que força
+  esse redirecionamento — veja o backend em /backend).
+
+  Estrutura deste arquivo:
+    1. <style>   -> toda a aparência (cores, layout, responsividade)
+    2. <body>    -> as 3 "telas" da página (lista de cursos, detalhe do
+                    curso, tela de sucesso). Só uma fica visível por vez;
+                    o JavaScript alterna entre elas.
+    3. <script>  -> dados dos cursos + lógica de navegação entre telas
+                    + a chamada para liberar o acesso (integra com o Flask)
+
+  INTEGRAÇÃO COM O BACKEND (app.py): ao abrir um curso registra a visualização,
+  o botão "Tenho interesse" registra o interesse declarado, a área "Sou aluno"
+  consulta o RA e o botão "Liberar acesso" chama /api/liberar de verdade.
+
+  Este arquivo NÃO depende de nada externo (sem CDN, sem fontes do Google,
+  sem imagens de fora) de propósito: como ele é servido ANTES da liberação
+  de internet, qualquer dependência externa simplesmente não carregaria.
+  ============================================================================
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal de Acesso · Fatec Jahu</title>
+<style>
+
+  /* ==========================================================
+     VARIÁVEIS DE DESIGN (CSS Custom Properties)
+     ----------------------------------------------------------
+     Centraliza cores, arredondamento de bordas e sombras aqui.
+     Se quiser mudar a cor principal do site inteiro, por
+     exemplo, basta trocar o valor de --red uma única vez.
+     ========================================================== */
+  :root{
+    /* Paleta institucional Fatec/Centro Paula Souza (vermelho e preto) */
+    --red:#E30613;         /* vermelho principal (botões, destaques) */
+    --red-dark:#B7050F;    /* vermelho escuro (hover, gradientes) */
+    --red-light:#FF3B47;   /* variação clara, reservada para detalhes */
+    --black:#141414;       /* preto do cabeçalho e textos fortes */
+    --charcoal:#262626;    /* cinza bem escuro, usado em gradientes */
+
+    /* Tons neutros de texto e fundo */
+    --gray:#6B7280;        /* texto secundário (descrições, legendas) */
+    --gray-light:#9CA3AF;  /* texto terciário (rodapé) */
+    --line:#E9E9EC;        /* bordas e divisórias sutis */
+    --bg:#FAFAFA;          /* fundo geral da página */
+    --card:#FFFFFF;        /* fundo dos cartões/caixas */
+    --ink:#171717;         /* cor padrão do texto */
+
+    /* Arredondamento de cantos, do menor (sm) ao maior (lg) */
+    --radius-lg:20px;
+    --radius-md:14px;
+    --radius-sm:10px;
+
+    /* Sombras, do sutil (sm) ao mais forte (lg) */
+    --shadow-sm:0 1px 2px rgba(20,20,20,.05), 0 1px 1px rgba(20,20,20,.03);
+    --shadow-md:0 8px 24px rgba(20,20,20,.08);
+    --shadow-lg:0 16px 40px rgba(20,20,20,.14);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  h1,h2,h3{
+    font-family:inherit;
+    letter-spacing:-.02em;
+  }
+
+  /* ==========================================================
+     CABEÇALHO (header)
+     ----------------------------------------------------------
+     Faixa preta/vermelha no topo com a logo, o nome da rede
+     ("Rede aberta") e o título de boas-vindas.
+     ========================================================== */
+  header{
+    background:var(--black);
+    background-image:linear-gradient(135deg, var(--black) 0%, var(--charcoal) 55%, var(--red-dark) 160%);
+    color:#fff;
+    padding:22px 20px 40px;
+  }
+  .header-inner{
+    max-width:1000px;
+    margin:0 auto;
+  }
+
+  .brand-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin-bottom:26px;
+  }
+  /* Quadradinho vermelho com "FJ" -- substitua por <img> se
+     tiver o arquivo oficial da logo da Fatec Jahu */
+  .logo-mark{
+    width:42px;height:42px;
+    flex:none;
+    border-radius:11px;
+    background:var(--red);
+    display:flex;align-items:center;justify-content:center;
+    font-weight:800;
+    font-size:15px;
+    letter-spacing:-.03em;
+    color:#fff;
+    box-shadow:0 4px 14px rgba(227,6,19,.45);
+  }
+  .brand-text{
+    display:flex;
+    flex-direction:column;
+    line-height:1.15;
+  }
+  .brand-text .b1{
+    font-weight:800;
+    font-size:15px;
+    letter-spacing:.02em;
+  }
+  .brand-text .b2{
+    font-size:11px;
+    color:rgba(255,255,255,.55);
+    font-weight:500;
+    letter-spacing:.03em;
+  }
+  /* Selo "Rede aberta" com bolinha verde piscando no canto do header */
+  .status-chip{
+    margin-left:auto;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:#fff;
+    background:rgba(255,255,255,.10);
+    border:1px solid rgba(255,255,255,.16);
+    padding:6px 11px;
+    border-radius:999px;
+  }
+  .status-chip .dot{
+    width:6px;height:6px;border-radius:50%;
+    background:#3ED598;
+    box-shadow:0 0 0 3px rgba(62,213,152,.22);
+  }
+
+  header h1{
+    font-size:clamp(24px,4.6vw,36px);
+    line-height:1.18;
+    margin:0 0 10px;
+    font-weight:800;
+    max-width:620px;
+  }
+  header p.sub{
+    margin:0;
+    color:rgba(255,255,255,.68);
+    font-size:15px;
+    max-width:520px;
+    line-height:1.55;
+    font-weight:400;
+  }
+
+  /* ==========================================================
+     LAYOUT GERAL (main)
+     ----------------------------------------------------------
+     Container central que envolve as 3 telas da página.
+     ========================================================== */
+  main{
+    max-width:1000px;
+    margin:0 auto;
+    padding:28px 20px 60px;
+  }
+
+  .board-label{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin:4px 2px 16px;
+  }
+  .board-label h2{
+    font-size:13px;
+    text-transform:uppercase;
+    letter-spacing:.09em;
+    color:var(--black);
+    margin:0;
+    font-weight:800;
+  }
+  .board-label span{
+    font-size:12.5px;
+    color:var(--gray);
+    font-weight:500;
+  }
+
+  /* ==========================================================
+     GRADE DE CURSOS (#view-list) -- TELA 1
+     ----------------------------------------------------------
+     Grid responsivo: 3 colunas no desktop, ajustado abaixo
+     para telas menores via media queries.
+     ========================================================== */
+  #view-list{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);   /* desktop: 3 colunas */
+    gap:14px;
+  }
+
+  /* TABLET (telas até 1024px, ex: iPad) -> 2 colunas */
+  @media (max-width:1024px){
+    #view-list{grid-template-columns:repeat(2, 1fr);}
+  }
+
+  /* CELULAR (telas até 620px) -> 1 coluna + espaçamentos menores */
+  @media (max-width:620px){
+    #view-list{grid-template-columns:1fr;}
+    header{padding:18px 16px 32px;}
+    main{padding:22px 14px 50px;}
+  }
+
+  /* Cada "botão-cartão" clicável da lista de cursos */
+  .course-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-md);
+    padding:18px 18px 16px;
+    cursor:pointer;
+    text-align:left;
+    transition:transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease, border-color .18s ease;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    box-shadow:var(--shadow-sm);
+    -webkit-tap-highlight-color:transparent;
+  }
+  .course-card:hover, .course-card:focus-visible{
+    transform:translateY(-3px);
+    box-shadow:var(--shadow-md);
+    border-color:#F3C4C7;
+    outline:none;
+  }
+  .course-card:active{transform:translateY(-1px) scale(.99);}
+
+  .card-top-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .course-num{
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.05em;
+    color:var(--red-dark);
+    background:#FDECED;
+    padding:4px 9px;
+    border-radius:999px;
+  }
+  .area-tag{
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    font-size:11px;
+    font-weight:600;
+    color:var(--charcoal);
+    background:#F1F1F3;
+    padding:4px 9px;
+    border-radius:999px;
+  }
+  .area-tag svg{width:11px;height:11px;flex:none;}
+  .course-card h3{
+    margin:0;
+    font-size:16.5px;
+    line-height:1.32;
+    font-weight:700;
+    color:var(--black);
+  }
+  .course-card .go{
+    margin-top:auto;
+    font-size:13px;
+    color:var(--red-dark);
+    font-weight:700;
+    display:flex;
+    align-items:center;
+    gap:5px;
+  }
+  .course-card .go svg{width:13px;height:13px;transition:transform .18s ease;}
+  .course-card:hover .go svg{transform:translateX(3px);}
+
+  /* ==========================================================
+     TELA DE DETALHE DO CURSO (#view-detail) -- TELA 2
+     ----------------------------------------------------------
+     Fica escondida (display:none) até o usuário clicar em um
+     curso; o JavaScript (função showDetail) troca a visibilidade.
+     ========================================================== */
+  #view-detail{display:none;}
+  .back-btn{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    background:none;
+    border:none;
+    color:var(--red-dark);
+    font-size:14px;
+    font-weight:700;
+    cursor:pointer;
+    padding:8px 4px;
+    margin-bottom:12px;
+    border-radius:8px;
+  }
+  .back-btn:hover{background:#FDECED;}
+  .back-btn svg{width:14px;height:14px;}
+
+  .detail-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-lg);
+    padding:30px 28px 26px;
+    box-shadow:var(--shadow-md);
+  }
+  @media (max-width:620px){
+    .detail-card{padding:22px 18px 20px; border-radius:var(--radius-md);}
+  }
+
+  .detail-head{
+    border-bottom:1px solid var(--line);
+    padding-bottom:18px;
+    margin-bottom:18px;
+  }
+  .detail-head h2{
+    margin:8px 0 0;
+    font-size:clamp(20px,3.4vw,26px);
+    color:var(--black);
+    font-weight:800;
+    max-width:520px;
+  }
+  .meta-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px 10px;
+    margin-top:14px;
+  }
+  .meta-pill{
+    font-size:12.5px;
+    font-weight:600;
+    color:var(--charcoal);
+    background:var(--bg);
+    border:1px solid var(--line);
+    padding:6px 11px;
+    border-radius:8px;
+  }
+  .detail-body h4{
+    font-size:11.5px;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    color:var(--gray);
+    font-weight:800;
+    margin:22px 0 8px;
+  }
+  .detail-body p{
+    font-size:15px;
+    line-height:1.68;
+    color:var(--ink);
+    margin:0;
+  }
+  .contato-box{
+    margin-top:22px;
+    background:var(--bg);
+    border:1px dashed var(--line);
+    border-radius:var(--radius-sm);
+    padding:14px 16px;
+    font-size:13.5px;
+    color:var(--gray);
+    line-height:1.6;
+  }
+  .contato-box strong{color:var(--black);}
+
+  /* ==========================================================
+     BOTÃO "LIBERAR ACESSO À INTERNET"
+     ----------------------------------------------------------
+     Este é o botão que, ao ser clicado, dispara a função
+     liberarAcesso() no <script> abaixo -- o ponto de integração
+     com o backend Flask.
+     ========================================================== */
+  .release-zone{
+    margin-top:28px;
+    padding-top:22px;
+    border-top:1px solid var(--line);
+    text-align:center;
+  }
+  .release-zone p{
+    font-size:13px;
+    color:var(--gray);
+    margin:0 0 14px;
+    font-weight:500;
+  }
+  #btn-liberar{
+    background:var(--red);
+    background-image:linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%);
+    color:#fff;
+    border:none;
+    font-size:15.5px;
+    font-weight:800;
+    padding:15px 32px;
+    border-radius:12px;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:9px;
+    transition:transform .15s ease, box-shadow .15s ease, filter .15s ease;
+    box-shadow:0 10px 24px rgba(227,6,19,.30);
+    width:100%;
+    max-width:360px;
+    justify-content:center;
+  }
+  #btn-liberar:hover{filter:brightness(1.06); transform:translateY(-1px); box-shadow:0 14px 30px rgba(227,6,19,.36);}
+  #btn-liberar:active{transform:translateY(0) scale(.98);}
+  #btn-liberar svg{width:18px;height:18px;}
+
+  /* ==========================================================
+     TELA DE SUCESSO (#view-success) -- TELA 3
+     ----------------------------------------------------------
+     Aparece depois que o backend confirma a liberação do acesso.
+     ========================================================== */
+  #view-success{
+    display:none;
+    text-align:center;
+    padding:70px 20px;
+  }
+  .check-circle{
+    width:68px;height:68px;
+    border-radius:50%;
+    background:var(--red);
+    background-image:linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%);
+    display:flex;align-items:center;justify-content:center;
+    margin:0 auto 22px;
+    box-shadow:0 12px 28px rgba(227,6,19,.32);
+    animation:pop .35s cubic-bezier(.2,1.4,.4,1);
+  }
+  @keyframes pop{
+    0%{transform:scale(.5); opacity:0;}
+    100%{transform:scale(1); opacity:1;}
+  }
+  .check-circle svg{width:32px;height:32px;stroke:#fff;}
+  #view-success h2{
+    color:var(--black);
+    font-size:22px;
+    font-weight:800;
+    margin:0 0 8px;
+  }
+  #view-success p{
+    color:var(--gray);
+    font-size:14.5px;
+    max-width:360px;
+    margin:0 auto;
+    line-height:1.6;
+  }
+
+  footer{
+    text-align:center;
+    padding:26px 20px 44px;
+    font-size:12px;
+    color:var(--gray-light);
+    font-weight:500;
+  }
+
+  /* ==========================================================
+     AVISOS, ÁREA DO ALUNO E BOTÃO DE INTERESSE (integração backend)
+     ========================================================== */
+  .avisos{grid-column:1/-1; display:flex; flex-direction:column; gap:10px;}
+  .aviso{background:#FFF7E6; border:1px solid #F5D9A6; border-radius:var(--radius-sm); padding:12px 14px; font-size:14px; line-height:1.5;}
+  .aviso strong{display:block; color:var(--black); margin-bottom:2px;}
+  .aluno-box{grid-column:1/-1; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md); padding:14px 16px; box-shadow:var(--shadow-sm);}
+  .aluno-box summary{cursor:pointer; font-weight:700; font-size:14px; color:var(--black);}
+  .aluno-form{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
+  .aluno-form input{flex:1; min-width:180px; padding:11px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); font-size:15px;}
+  .aluno-form button, #btn-interesse{background:var(--black); color:#fff; border:none; border-radius:var(--radius-sm); padding:11px 16px; font-weight:700; font-size:14px; cursor:pointer;}
+  #btn-interesse{margin-top:18px;}
+  #btn-interesse[disabled]{background:#3ED598; color:#0b3d2a; cursor:default;}
+  .aluno-msg{margin-top:10px; font-size:13.5px; color:var(--gray);}
+  .aluno-msg.erro{color:var(--red-dark); font-weight:600;}
+  .horarios{width:100%; border-collapse:collapse; margin-top:10px; font-size:13.5px;}
+  .horarios td,.horarios th{border-bottom:1px solid var(--line); padding:6px 8px; text-align:left;}
+  #msg-liberar{margin-top:12px; font-size:13.5px; color:var(--red-dark); font-weight:600;}
+</style>
+</head>
+<body>
+
+<!-- ======================= CABEÇALHO ======================= -->
+<header>
+  <div class="header-inner">
+
+    <!-- Logo + nome da faculdade + selo "Rede aberta" -->
+    <div class="brand-row">
+      <div class="logo-mark">FJ</div> <!-- monograma provisório; troque por <img> se tiver a logo oficial -->
+      <div class="brand-text">
+        <span class="b1">FATEC JAHU</span>
+        <span class="b2">Faculdade de Tecnologia</span>
+      </div>
+      <div class="status-chip"><span class="dot"></span> Rede aberta</div>
+    </div>
+
+    <!-- Título e subtítulo de boas-vindas -->
+    <h1>Antes de navegar, conheça os cursos da Fatec Jahu</h1>
+    <p class="sub">Escolha um curso no painel abaixo para ver suas informações. Ao final, libere seu acesso à internet.</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- =========================================================
+       TELA 1 — LISTA DE CURSOS
+       Visível por padrão (é a primeira tela que o usuário vê).
+       Os cards de curso são gerados por JavaScript (ver COURSES[]
+       no <script> abaixo) e inseridos aqui dentro de #view-list.
+       ========================================================= -->
+  <section id="view-list">
+    <div class="board-label" style="grid-column:1/-1;">
+      <h2>Cursos disponíveis</h2>
+      <span id="course-count"></span>
+    </div>
+
+    <!-- Avisos públicos (ex.: vestibular) vindos do banco: /api/avisos -->
+    <div class="avisos" id="avisos"></div>
+
+    <!-- Área do aluno: só RAs cadastrados previamente (/api/login) -->
+    <details class="aluno-box">
+      <summary>Sou aluno da Fatec — ver meus avisos e horários</summary>
+      <form class="aluno-form" onsubmit="return loginAluno(event)">
+        <input id="ra" type="text" inputmode="text" autocomplete="off" maxlength="20" placeholder="Digite seu RA">
+        <button type="submit">Entrar</button>
+      </form>
+      <div class="aluno-msg" id="aluno-msg"></div>
+      <div id="aluno-conteudo"></div>
+    </details>
+    <!-- os cards <button class="course-card"> são inseridos via JS -->
+  </section>
+
+  <!-- =========================================================
+       TELA 2 — DETALHE DO CURSO
+       Escondida por padrão (display:none no CSS). O JavaScript
+       preenche os campos id="d-*" com os dados do curso clicado
+       e então exibe esta seção (função showDetail).
+       ========================================================= -->
+  <section id="view-detail">
+
+    <!-- Botão para voltar à lista de cursos -->
+    <button class="back-btn" onclick="showList()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar ao painel
+    </button>
+
+    <div class="detail-card">
+
+      <!-- Cabeçalho do curso: número, nome e período/duração -->
+      <div class="detail-head">
+        <span class="course-num" id="d-cais"></span>   <!-- ex: "CURSO 02" -->
+        <h2 id="d-nome"></h2>                            <!-- ex: "Desenvolvimento de Software Multiplataforma" -->
+        <div class="meta-row" id="d-meta"></div>         <!-- pills de período/duração -->
+      </div>
+
+      <!-- Texto descritivo do curso -->
+      <div class="detail-body">
+        <h4>Perfil profissional</h4>
+        <p id="d-perfil"></p>
+      </div>
+
+      <!-- Dados de contato da coordenação do curso -->
+      <div class="contato-box" id="d-contato"></div>
+
+      <!-- Interesse declarado (vai para o banco: /api/evento) -->
+      <button type="button" id="btn-interesse" onclick="marcarInteresse()">Tenho interesse neste curso</button>
+
+      <!-- Botão que efetivamente libera o acesso à internet -->
+      <div class="release-zone">
+        <p>Terminou de ler? Libere sua navegação para acessar a internet normalmente.</p>
+        <button id="btn-liberar" onclick="liberarAcesso()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"/></svg>
+          Liberar acesso à internet
+        </button>
+        <div id="msg-liberar"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       TELA 3 — SUCESSO / ACESSO LIBERADO
+       Aparece depois que liberarAcesso() confirma a liberação
+       junto ao backend Flask.
+       ========================================================= -->
+  <section id="view-success">
+    <div class="check-circle">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+    </div>
+    <h2>Acesso liberado</h2>
+    <p>Você já pode navegar normalmente. Se o celular mostrar um aviso de login, pode fechá-lo. Obrigado por conhecer um pouco da Fatec Jahu.</p>
+  </section>
+
+</main>
+
+<footer>Fatec Jahu · Rua Frei Galvão, s/n, Jardim Pedro Ometto, Jaú – SP</footer>
+
+<script>
+/* =========================================================================
+   DADOS DOS CURSOS
+   Resumos escritos a partir das informações públicas de fatecjahu.edu.br.
+   Para os cursos sem perfil publicado no site, o texto avisa isso
+   claramente em vez de inventar conteúdo.
+   ========================================================================= */
+
+const ICONS = {
+  naval: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18l1.5-5h15L21 18"/><path d="M6 13V7h9l3 6"/><path d="M12 7V3"/></svg>',
+  tech: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg>',
+  gestao: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="12" width="4" height="8"/><rect x="10" y="7" width="4" height="13"/><rect x="17" y="3" width="4" height="17"/></svg>',
+  ambiental: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C7 8 5 11 5 14a7 7 0 0014 0c0-3-2-6-7-12z"/></svg>'
+};
+
+const COURSES = [
+  {
+    id: "cn",
+    cais: "CURSO 01",
+    nome: "Construção Naval",
+    area: "naval",
+    periodo: "Diurno",
+    duracao: "3 anos (6 semestres)",
+    perfil: "Forma tecnólogos que planejam, supervisionam e fiscalizam processos de construção, reparo e manutenção naval, com aulas práticas no Estaleiro Escola do campus (900 m² de laboratórios, incluindo tanque de provas, oficina de corte e soldagem e CAD/CAM). Prepara para atuar em estaleiros, sociedades classificadoras, vistoria naval e na Marinha Mercante.",
+    contato: "Coordenação: Prof. Dr. Hilton Aparecido Garcia · Tel.: (14) 3622-8280, ramal 222"
+  },
+  {
+    id: "dsm",
+    cais: "CURSO 02",
+    nome: "Desenvolvimento de Software Multiplataforma",
+    area: "tech",
+    periodo: "Matutino",
+    duracao: "3 anos (6 semestres)",
+    perfil: "Forma profissionais que projetam, desenvolvem e testam software para múltiplas plataformas, aplicações em nuvem e Internet das Coisas, com base em linguagens de programação, banco de dados, engenharia de software, segurança da informação e inteligência artificial. Também trabalha coordenação de projetos e equipes de desenvolvimento.",
+    contato: "Coordenação: Prof. Me. Célio Sormani Junior · Tel.: (14) 3622-8280, ramal 210"
+  },
+  {
+    id: "gpi",
+    cais: "CURSO 03",
+    nome: "Gestão da Produção Industrial",
+    area: "gestao",
+    periodo: "Noturno",
+    duracao: "3 anos (6 semestres)",
+    perfil: "Forma tecnólogos para atuar na inovação e melhoria de processos produtivos, com foco em produtividade, qualidade e sustentabilidade. O curso usa projetos interdisciplinares e metodologias ativas de aprendizagem, preparando para atuação em indústria, comércio ou serviços.",
+    contato: "Coordenação: Prof. Esp. Alessandro Lameiro Brancão · Tel.: (14) 3622-8280, ramal 224"
+  },
+  {
+    id: "gti",
+    cais: "CURSO 04",
+    nome: "Gestão da Tecnologia da Informação",
+    area: "tech",
+    periodo: null,
+    duracao: null,
+    perfil: "Forma tecnólogos que administram a infraestrutura física e lógica de ambientes de TI: definem parâmetros de uso de sistemas, gerenciam equipes técnicas, implantam e documentam rotinas, e controlam os níveis de serviço de sistemas operacionais e bancos de dados.",
+    contato: "Coordenação: Profa. Esp. Vera Maria Ferro Merlini · Tel.: (14) 3622-8280, ramal 201"
+  },
+  {
+    id: "ge",
+    cais: "CURSO 05",
+    nome: "Gestão Empresarial (EAD)",
+    area: "gestao",
+    periodo: "EAD",
+    duracao: null,
+    perfil: "Curso oferecido na modalidade a distância (EAD) pela Fatec Jahu. O perfil profissional detalhado ainda não está publicado na página do curso — para informações completas, é recomendável consultar a coordenação.",
+    contato: "Consulte a Diretoria Acadêmica: (14) 3622-8280"
+  },
+  {
+    id: "log",
+    cais: "CURSO 06",
+    nome: "Logística",
+    area: "gestao",
+    periodo: null,
+    duracao: null,
+    perfil: "Forma profissionais especializados em armazenagem, distribuição e transporte. Planeja e coordena a movimentação física e de informações em operações multimodais, gerencia redes de distribuição, fornecedores, estoques e custos de frete, cobrindo os modais rodoviário, ferroviário, aeroviário, dutoviário e aquaviário.",
+    contato: "Coordenação: Prof. Me. Flávio Luís Grava Scalco · Tel.: (14) 3622-8280, ramal 232"
+  },
+  {
+    id: "marh",
+    cais: "CURSO 07",
+    nome: "Meio Ambiente e Recursos Hídricos",
+    area: "ambiental",
+    periodo: "Noturno",
+    duracao: "3 anos (6 semestres)",
+    perfil: "Forma tecnólogos aptos a planejar e gerenciar os aspectos ambientais de organizações, identificar e solucionar problemas ambientais, e realizar a gestão responsável de recursos hídricos — incluindo a recuperação de áreas degradadas, rios e bacias hidrográficas.",
+    contato: "Coordenação: Profª. Drª. Marina Carboni · Tel.: (14) 3622-8280, ramal 234"
+  },
+  {
+    id: "si",
+    cais: "CURSO 08",
+    nome: "Sistemas para Internet",
+    area: "tech",
+    periodo: "Manhã (1º ao 4º sem.) e noite (5º e 6º sem.)",
+    duracao: "3 anos (6 semestres) · última turma: 1º sem. 2023",
+    perfil: "Curso em fase de extinção (sem novas entradas desde 2023). Formava profissionais para desenvolver programas, interfaces e aplicativos para internet e intranet, incluindo gerenciamento de projetos com acesso a banco de dados e tecnologias como computação móvel e redes sem fio.",
+    contato: "Coordenação: Prof. Esp. Hélio Luis da Silva Rodrigues · Tel.: (14) 3622-8280, ramal 242"
+  },
+  {
+    id: "sn",
+    cais: "CURSO 09",
+    nome: "Sistemas de Navegação Fluvial",
+    area: "naval",
+    periodo: null,
+    duracao: null,
+    perfil: "Forma tecnólogos para planejar, executar e fiscalizar sistemas de transporte aquaviário, gerenciar frotas, portos e terminais, e realizar vistorias e inspeções navais. Conta com laboratórios do Estaleiro Escola e simuladores de cartas náuticas e de manobras.",
+    contato: "Coordenação: Profa. Rosa Maria Padroni · Tel.: (14) 3622-8280, ramais 222/201"
+  },
+  {
+    id: "en",
+    cais: "CURSO 10",
+    nome: "Engenharia Naval",
+    area: "naval",
+    periodo: null,
+    duracao: null,
+    perfil: "Curso novo da Fatec Jahu. O perfil profissional detalhado ainda não está publicado na página oficial do curso — para informações completas, é recomendável consultar a coordenação.",
+    contato: "Consulte a Diretoria Acadêmica: (14) 3622-8280"
+  },
+  {
+    id: "ep",
+    cais: "CURSO 11",
+    nome: "Engenharia de Produção",
+    area: "gestao",
+    periodo: null,
+    duracao: null,
+    perfil: "Curso da Fatec Jahu voltado à gestão e otimização de sistemas produtivos. O perfil profissional detalhado ainda não está publicado na página oficial do curso — para informações completas, é recomendável consultar a coordenação.",
+    contato: "Consulte a Diretoria Acadêmica: (14) 3622-8280"
+  }
+];
+
+/* =========================================================================
+   RENDERIZAÇÃO DO PAINEL
+   ========================================================================= */
+const listEl = document.getElementById("view-list");
+document.getElementById("course-count").textContent = COURSES.length + " cursos";
+
+COURSES.forEach(c => {
+  const card = document.createElement("button");
+  card.className = "course-card";
+  card.setAttribute("type", "button");
+  card.innerHTML = `
+    <div class="card-top-row">
+      <span class="course-num">${c.cais}</span>
+      <span class="area-tag">${ICONS[c.area]} ${areaLabel(c.area)}</span>
+    </div>
+    <h3>${c.nome}</h3>
+    <span class="go">Ver informações
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 18l6-6-6-6"/></svg>
+    </span>
+  `;
+  card.addEventListener("click", () => showDetail(c.id));
+  listEl.appendChild(card);
+});
+
+function areaLabel(area){
+  return { naval:"Naval", tech:"Tecnologia", gestao:"Gestão", ambiental:"Ambiental" }[area] || area;
+}
+
+/* =========================================================================
+   NAVEGAÇÃO ENTRE TELAS
+   ========================================================================= */
+function showDetail(id){
+  const c = COURSES.find(x => x.id === id);
+  if (!c) return;
+
+  document.getElementById("d-cais").textContent = c.cais;
+  document.getElementById("d-nome").textContent = c.nome;
+  document.getElementById("d-perfil").textContent = c.perfil;
+  document.getElementById("d-contato").innerHTML = `<strong>Contato:</strong> ${c.contato}`;
+
+  const meta = document.getElementById("d-meta");
+  meta.innerHTML = "";
+  if (c.periodo) meta.innerHTML += `<span class="meta-pill">Período: ${c.periodo}</span>`;
+  if (c.duracao) meta.innerHTML += `<span class="meta-pill">Duração: ${c.duracao}</span>`;
+
+  cursoAtual = id;
+  const bi = document.getElementById("btn-interesse");
+  bi.disabled = !!interessesMarcados[id];
+  bi.textContent = interessesMarcados[id] ? "Interesse registrado ✓" : "Tenho interesse neste curso";
+  registrar("ver_curso", id);
+
+  document.getElementById("view-list").style.display = "none";
+  document.getElementById("view-detail").style.display = "block";
+  document.getElementById("view-success").style.display = "none";
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+function showList(){
+  document.getElementById("view-list").style.display = "grid";
+  document.getElementById("view-detail").style.display = "none";
+  document.getElementById("view-success").style.display = "none";
+}
+
+/* =========================================================================
+   LIBERAÇÃO DE ACESSO
+   -------------------------------------------------------------------------
+   Este é o ponto de integração com o backend do portal cativo (Flask).
+   A função abaixo chama POST /api/liberar. O backend Flask identifica o
+   MAC do aparelho que fez a requisição e o acrescenta nas regras do
+   iptables, liberando aquele cliente para navegar livremente.
+   ========================================================================= */
+function liberarAcesso(){
+  const msg = document.getElementById("msg-liberar");
+  const btn = document.getElementById("btn-liberar");
+  msg.textContent = "";
+  btn.disabled = true;
+  fetch("/api/liberar", { method: "POST" })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        document.getElementById("view-detail").style.display = "none";
+        document.getElementById("view-success").style.display = "block";
+        window.scrollTo({top:0, behavior:"smooth"});
+      } else {
+        msg.textContent = data.erro || "Não foi possível liberar. Tente novamente.";
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      msg.textContent = "Sem resposta do portal. Confira se está conectado ao Wi-Fi do evento.";
+      btn.disabled = false;
+    });
+}
+
+/* =========================================================================
+   INTEGRAÇÃO COM O BACKEND (app.py)
+   ========================================================================= */
+let cursoAtual = null;
+const interessesMarcados = {};
+
+function registrar(tipo, curso){
+  // "dispara e esquece": se falhar, não atrapalha a navegação do visitante
+  fetch("/api/evento", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({tipo: tipo, curso: curso}),
+    keepalive: true
+  }).catch(() => {});
+}
+
+function marcarInteresse(){
+  if (!cursoAtual || interessesMarcados[cursoAtual]) return;
+  interessesMarcados[cursoAtual] = true;
+  registrar("interesse", cursoAtual);
+  const bi = document.getElementById("btn-interesse");
+  bi.disabled = true;
+  bi.textContent = "Interesse registrado ✓";
+}
+
+// monta elementos com textContent (nunca innerHTML) para o conteúdo vindo do banco
+function el(tag, classe, texto){
+  const e = document.createElement(tag);
+  if (classe) e.className = classe;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+
+function carregarAvisos(){
+  fetch("/api/avisos").then(r => r.json()).then(d => {
+    const box = document.getElementById("avisos");
+    (d.avisos || []).forEach(a => {
+      const div = el("div", "aviso");
+      div.appendChild(el("strong", "", a.titulo));
+      div.appendChild(document.createTextNode(a.mensagem));
+      box.appendChild(div);
+    });
+  }).catch(() => {});
+}
+
+const DIAS = ["", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+function loginAluno(ev){
+  ev.preventDefault();
+  const msg = document.getElementById("aluno-msg");
+  const conteudo = document.getElementById("aluno-conteudo");
+  msg.className = "aluno-msg";
+  msg.textContent = "Verificando...";
+  conteudo.innerHTML = "";
+  fetch("/api/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ra: document.getElementById("ra").value})
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { msg.className = "aluno-msg erro"; msg.textContent = d.erro || "Não foi possível entrar."; return; }
+    msg.textContent = d.nome ? "Olá, " + d.nome + "!" : "Bem-vindo!";
+    d.avisos.forEach(a => {
+      const div = el("div", "aviso");
+      div.appendChild(el("strong", "", a.titulo));
+      div.appendChild(document.createTextNode(a.mensagem));
+      conteudo.appendChild(div);
+    });
+    if (d.horarios.length) {
+      const t = el("table", "horarios");
+      const cab = el("tr");
+      ["Dia", "Horário", "Disciplina", "Sala"].forEach(h => cab.appendChild(el("th", "", h)));
+      t.appendChild(cab);
+      d.horarios.forEach(h => {
+        const tr = el("tr");
+        [DIAS[h.dia] || h.dia, h.inicio + "–" + h.fim, h.disciplina, h.sala || ""].forEach(v => tr.appendChild(el("td", "", v)));
+        t.appendChild(tr);
+      });
+      conteudo.appendChild(t);
+    }
+  }).catch(() => { msg.className = "aluno-msg erro"; msg.textContent = "Sem resposta do portal."; });
+  return false;
+}
+
+carregarAvisos();
+</script>
+
+</body>
+</html>

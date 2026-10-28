@@ -1,0 +1,12 @@
+[Unit]
+Description=Portal Fatec - hotspot (hostapd + dnsmasq + firewall)
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/portal/rede.sh start
+ExecStop=/opt/portal/rede.sh stop
+
+[Install]
+WantedBy=multi-user.target
